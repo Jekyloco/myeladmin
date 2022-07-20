@@ -2,14 +2,22 @@ package com.jekyloco.rest;
 
 
 import cn.hutool.core.util.IdUtil;
+import com.jekyloco.config.RsaProperties;
 import com.jekyloco.service.dto.AuthUserDto;
+import com.jekyloco.service.dto.JwtUserDto;
 import com.jekyloco.utils.RedisUtils;
+import com.jekyloco.utils.RsaUtils;
 import com.wf.captcha.ArithmeticCaptcha;
 import com.wf.captcha.base.Captcha;
 import io.netty.util.internal.StringUtil;
 import lombok.RequiredArgsConstructor;
+import org.apache.catalina.User;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.config.annotation.authentication.builders.AuthenticationManagerBuilder;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
@@ -23,11 +31,12 @@ import java.util.concurrent.TimeUnit;
 @RequiredArgsConstructor
 public class AuthorizationController {
     private final RedisUtils redisUtils;
-
+    private final AuthenticationManagerBuilder authenticationManagerBuilder;
 
     //@Validated 对传送的参数进行数据校验
     @PostMapping(value = "/login")
     public ResponseEntity<Object> login(@Validated @RequestBody AuthUserDto authUserDto, HttpServletRequest request) throws Exception {
+        String password = RsaUtils.decryptByPrivateKey(RsaProperties.privateKey, authUserDto.getPassword());
         //查询验证码
         //通过authUserDto的uuid从Redis中获取验证码
         String code = (String) redisUtils.get(authUserDto.getUuid());
@@ -37,13 +46,26 @@ public class AuthorizationController {
             throw new Exception("验证码不存在或已过期");
         }
 
-        //用户输入验证码为空或用户验证码不等于缓存中的验证码
-        if (StringUtils.isBlank(authUserDto.getCode()) || !authUserDto.getCode().equalsIgnoreCase(code)) {
-            throw new Exception("验证码错误");
-        }
+        //认证授权
+        UsernamePasswordAuthenticationToken authenticationToken = new UsernamePasswordAuthenticationToken(authUserDto.getUsername(), password);
+        System.out.println(authUserDto.getUsername());
+        System.out.println(authUserDto.getPassword());
+        System.out.println(password);
 
+        Authentication authentication = authenticationManagerBuilder.getObject().authenticate(authenticationToken);
+        SecurityContextHolder.getContext().setAuthentication(authentication);
+        final JwtUserDto jwtUserDto = (JwtUserDto) authentication.getPrincipal();
+        Map<String, Object> authInfo = new HashMap<String, Object>() {{
+            put("token", "token");
+            put("user", jwtUserDto);
+        }};
+//        //用户输入验证码为空或用户验证码不等于缓存中的验证码
+//        if (StringUtils.isBlank(authUserDto.getCode()) || !authUserDto.getCode().equalsIgnoreCase(code)) {
+//            throw new Exception("验证码错误");
+//        }
         //验证码校验通过
-        return ResponseEntity.ok("验证码校验通过，未进行认证和授权");
+
+        return ResponseEntity.ok(authInfo);
     }
 
 
